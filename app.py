@@ -1,69 +1,60 @@
-import gradio as gr
-from huggingface_hub import InferenceClient
+import streamlit as st
+import pickle
+import neat
+import matplotlib.pyplot as plt
 
+# 1. Interface pour ton téléphone
+st.set_page_config(page_title="Régulateur IA", layout="centered")
+st.title("⚡ Régulateur de Tension IA")
+st.write("Cible de stabilisation : 220V")
 
-def respond(
-    message,
-    history: list[dict[str, str]],
-    system_message,
-    max_tokens,
-    temperature,
-    top_p,
-    hf_token: gr.OAuthToken,
-):
-    """
-    For more information on `huggingface_hub` Inference API support, please check the docs: https://huggingface.co/docs/huggingface_hub/v0.22.2/en/guides/inference
-    """
-    client = InferenceClient(token=hf_token.token, model="openai/gpt-oss-20b")
+# 2. Fonction pour charger le cerveau (IA) et la config
+@st.cache_resource
+def load_ia():
+    try:
+        # On charge le fichier .pkl présent sur ton GitHub
+        with open('IA_stabilisatrice.pkl', 'rb') as f:
+            gagnant = pickle.load(f)
+        
+        # On charge la config en utilisant le nom exact 'config_ia'
+        config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                             neat.DefaultSpeciesSet, neat.DefaultStagnation,
+                             'config_ia')
+        
+        return neat.nn.FeedForwardNetwork.create(gagnant, config)
+    except Exception as e:
+        st.error(f"Erreur de chargement : {e}")
+        return None
 
-    messages = [{"role": "system", "content": system_message}]
+# 3. Application du régulateur
+net = load_ia()
 
-    messages.extend(history)
-
-    messages.append({"role": "user", "content": message})
-
-    response = ""
-
-    for message in client.chat_completion(
-        messages,
-        max_tokens=max_tokens,
-        stream=True,
-        temperature=temperature,
-        top_p=top_p,
-    ):
-        choices = message.choices
-        token = ""
-        if len(choices) and choices[0].delta.content:
-            token = choices[0].delta.content
-
-        response += token
-        yield response
-
-
-"""
-For information on how to customize the ChatInterface, peruse the gradio docs: https://www.gradio.app/docs/chatinterface
-"""
-chatbot = gr.ChatInterface(
-    respond,
-    additional_inputs=[
-        gr.Textbox(value="You are a friendly Chatbot.", label="System message"),
-        gr.Slider(minimum=1, maximum=2048, value=512, step=1, label="Max new tokens"),
-        gr.Slider(minimum=0.1, maximum=4.0, value=0.7, step=0.1, label="Temperature"),
-        gr.Slider(
-            minimum=0.1,
-            maximum=1.0,
-            value=0.95,
-            step=0.05,
-            label="Top-p (nucleus sampling)",
-        ),
-    ],
-)
-
-with gr.Blocks() as demo:
-    with gr.Sidebar():
-        gr.LoginButton()
-    chatbot.render()
-
-
-if __name__ == "__main__":
-    demo.launch()
+if net:
+    st.success("✅ IA connectée")
+    
+    # Curseur pour simuler une tension au Togo (100V - 400V)
+    tension_entree = st.slider("Tension d'entrée (V)", 100.0, 400.0, 300.0)
+    
+    if st.button("Stabiliser à 220V"):
+        historique = []
+        tension = tension_entree
+        
+        # L'IA corrige la tension sur 50 cycles
+        for _ in range(50):
+            sortie = net.activate((tension, 220.0))
+            tension += sortie[0]
+            historique.append(tension)
+        
+        st.metric("Tension stabilisée", f"{tension:.2f} V")
+        
+        # Affichage du graphique de stabilisation
+        fig, ax = plt.subplots()
+        ax.plot(historique, label="Tension", color="blue", linewidth=2)
+        ax.axhline(y=220, color='red', linestyle='--', label="Cible 220V")
+        ax.set_ylim(0, 450)
+        ax.set_ylabel("Voltage (V)")
+        ax.legend()
+        st.pyplot(fig)
+else:
+    st.warning("Vérifie que 'IA_stabilisatrice.pkl' et 'config_ia' sont bien sur GitHub.")
+    
